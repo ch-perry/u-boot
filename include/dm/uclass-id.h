@@ -130,6 +130,7 @@ enum uclass_id {
 	UCLASS_RESET,		/* Reset controller device */
 	UCLASS_RKMTD,		/* Rockchip MTD device */
 	UCLASS_RNG,		/* Random Number Generator */
+	UCLASS_RPMI,		/* RPMI transport */
 	UCLASS_RTC,		/* Real time clock device */
 	UCLASS_SCMI_AGENT,	/* Interface with an SCMI server */
 	UCLASS_SCMI_BASE,	/* Interface for SCMI Base protocol */
