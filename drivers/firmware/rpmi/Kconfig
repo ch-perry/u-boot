@@ -1,0 +1,9 @@
+config RPMI_FIRMWARE
+	bool "Enable RPMI support"
+	depends on RISCV && DM && OF_CONTROL
+	select FIRMWARE
+	help
+	  RISC-V Platform Management Interface (RPMI) defines an OS-agnostic
+	  protocol for communication between an Application Processor (AP) and a
+	  platform microcontroller (PuC). The RPMI specification is available
+	  at: https://github.com/riscv-non-isa/riscv-rpmi
