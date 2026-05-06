@@ -1558,6 +1558,12 @@ F:	drivers/usb/gadget/f_rockusb.c
 F:	cmd/rockusb.c
 F:	doc/README.rockusb
 
+RPMI
+M:	Charles Perry <charles.perry@microchip.com>
+S:	Maintained
+F:	drivers/firmware/rpmi/
+F:	include/rpmi*
+
 SANDBOX
 M:	Simon Glass <sjg@chromium.org>
 S:	Maintained
