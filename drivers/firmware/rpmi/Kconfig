@@ -7,3 +7,12 @@ config RPMI_FIRMWARE
 	  protocol for communication between an Application Processor (AP) and a
 	  platform microcontroller (PuC). The RPMI specification is available
 	  at: https://github.com/riscv-non-isa/riscv-rpmi
+
+config RPMI_SBI_MPXY
+	bool "RPMI over SBI MPXY transport"
+	depends on RPMI_FIRMWARE && SBI
+	help
+	  Enable support for transport of RPMI messages over the message proxy
+	  (MPXY) extension of the supervisor binary interface (SBI). The
+	  specification for the MPXY extension is available at:
+	  https://github.com/riscv-non-isa/riscv-sbi-doc (chapter 20)
