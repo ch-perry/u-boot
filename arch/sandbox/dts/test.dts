@@ -883,6 +883,18 @@
 		sm: secure-monitor {
 			compatible = "sandbox,sm";
 		};
+
+		rpmi: rpmi {
+			compatible = "sandbox,rpmi-transport";
+			#mbox-cells = <1>;
+		};
+
+		rpmi_clock: rpmi-clock {
+			compatible = "riscv,rpmi-clock";
+			mboxes = <&rpmi 0x8>;
+			#clock-cells = <1>;
+			clocks = <&rpmi_clock 0>, <&rpmi_clock 1>, <&rpmi_clock 2>, <&rpmi_clock 3>;
+		};
 	};
 
 	fpga {

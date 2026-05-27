@@ -1567,6 +1567,7 @@ S:	Maintained
 F:	drivers/clk/clk_rpmi.c
 F:	drivers/firmware/rpmi/
 F:	include/rpmi*
+F:	test/dm/rpmi.c
 
 SANDBOX
 M:	Simon Glass <sjg@chromium.org>
