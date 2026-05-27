@@ -1,6 +1,7 @@
 config RPMI_FIRMWARE
 	bool "Enable RPMI support"
-	depends on RISCV && DM && OF_CONTROL
+	depends on RISCV || SANDBOX
+	depends on DM && OF_CONTROL
 	select FIRMWARE
 	help
 	  RISC-V Platform Management Interface (RPMI) defines an OS-agnostic
