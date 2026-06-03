@@ -16,3 +16,11 @@ config RPMI_SBI_MPXY
 	  (MPXY) extension of the supervisor binary interface (SBI). The
 	  specification for the MPXY extension is available at:
 	  https://github.com/riscv-non-isa/riscv-sbi-doc (chapter 20)
+
+config RPMI_SHMEM
+	bool "RPMI over shared memory transport"
+	depends on RPMI_FIRMWARE
+	help
+	  Enable support for transport of RPMI messages over shared memory as
+	  described in chapter 2 of the RPMI specification, available at:
+	  https://github.com/riscv-non-isa/riscv-rpmi
