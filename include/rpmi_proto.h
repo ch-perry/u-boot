@@ -83,4 +83,43 @@ enum rpmi_message_type {
 	RPMI_MSG_NOTIFICATION = 0x3,
 };
 
+/* RPMI clock service IDs */
+enum rpmi_clock_service_id {
+	RPMI_CLK_SRV_ENABLE_NOTIFICATION = 0x01,
+	RPMI_CLK_SRV_GET_NUM_CLOCKS = 0x02,
+	RPMI_CLK_SRV_GET_ATTRIBUTES = 0x03,
+	RPMI_CLK_SRV_GET_SUPPORTED_RATES = 0x04,
+	RPMI_CLK_SRV_SET_CONFIG = 0x05,
+	RPMI_CLK_SRV_GET_CONFIG = 0x06,
+	RPMI_CLK_SRV_SET_RATE = 0x07,
+	RPMI_CLK_SRV_GET_RATE = 0x08,
+	RPMI_CLK_SRV_ID_MAX_COUNT
+};
+
+/** Clock rate match mode */
+enum rpmi_clock_rate_match {
+	RPMI_CLK_RATE_MATCH_PLATFORM	= 0,
+	RPMI_CLK_RATE_MATCH_ROUND_DOWN	= 1,
+	RPMI_CLK_RATE_MATCH_ROUND_UP	= 2,
+	RPMI_CLK_RATE_MATCH_MAX
+};
+
+/** Supported clock states */
+enum rpmi_clock_state {
+	RPMI_CLK_STATE_DISABLED	= 0,
+	RPMI_CLK_STATE_ENABLED	= 1,
+	RPMI_CLK_STATE_MAX
+};
+
+/** Clock type based on rate format */
+enum rpmi_clock_type {
+	RPMI_CLK_TYPE_DISCRETE	= 0,
+	RPMI_CLK_TYPE_LINEAR	= 1,
+	RPMI_CLK_TYPE_MAX
+};
+
+#define RPMI_CLK_NAME_LEN 16
+
+#define RPMI_CLOCK_RATE_INVALID		(-1ULL)
+
 #endif

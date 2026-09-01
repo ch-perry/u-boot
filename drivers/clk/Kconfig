@@ -188,6 +188,13 @@ config CLK_OCTEON
 	help
 	  Enable this to support the clocks on Octeon MIPS platforms.
 
+config CLK_RPMI
+	bool "Enable RPMI clock driver"
+	depends on CLK && RPMI_FIRMWARE
+	help
+	  Enable this option if you want to support clock devices exposed
+	  by RISC-V Platform Management Interface (RPMI).
+
 config SANDBOX_CLK_CCF
 	bool "Sandbox Common Clock Framework [CCF] support"
 	depends on SANDBOX
