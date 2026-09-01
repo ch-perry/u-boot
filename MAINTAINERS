@@ -1564,6 +1564,7 @@ F:	doc/README.rockusb
 RPMI
 M:	Charles Perry <charles.perry@microchip.com>
 S:	Maintained
+F:	drivers/clk/clk_rpmi.c
 F:	drivers/firmware/rpmi/
 F:	include/rpmi*
 
