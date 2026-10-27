@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2026 Microchip Technology Inc. All rights reserved.
+ * Copyright (c) 2026, Rahul Pathak <rahul.pathak@oss.qualcomm.com>
  */
 
 #define LOG_CATEGORY UCLASS_RPMI
@@ -16,6 +17,7 @@
 #include <malloc.h>
 #include <rpmi-uclass.h>
 #include <string.h>
+#include <dm/device-internal.h>
 
 /* SBI MPXY channel IDs data in shared memory */
 struct sbi_mpxy_channel_ids_data {
@@ -60,10 +62,10 @@ enum sbi_mpxy_attribute_id {
 
 /* RPMI message protocol specific MPXY attributes */
 enum sbi_mpxy_rpmi_attribute_id {
-	SBI_MPXY_RPMI_ATTR_SERVICEGROUP_ID,
-	SBI_MPXY_RPMI_ATTR_SERVICEGROUP_VERSION,
-	SBI_MPXY_RPMI_ATTR_IMPL_ID,
-	SBI_MPXY_RPMI_ATTR_IMPL_VERSION,
+	SBI_MPXY_RPMI_ATTR_SERVICEGROUP_ID = 0x00,
+	SBI_MPXY_RPMI_ATTR_SERVICEGROUP_VERSION = 0x01,
+	SBI_MPXY_RPMI_ATTR_IMPL_ID = 0x02,
+	SBI_MPXY_RPMI_ATTR_IMPL_VERSION = 0x03,
 	SBI_MPXY_RPMI_ATTR_MAX_ID
 };
 
@@ -87,6 +89,17 @@ struct rpmi_sbi_mpxy {
 	struct sbi_mpxy_chan_desc *channel_descs;
 };
 
+static __maybe_unused struct rpmi_sbi_mpxy *mpxy_get_priv(void)
+{
+	struct udevice *dev;
+
+	if (uclass_get_device_by_driver(UCLASS_RPMI,
+					DM_DRIVER_GET(rpmi_sbi_mpxy), &dev))
+		return NULL;
+
+	return dev_get_priv(dev);
+}
+
 static int rpmi_sbi_mpxy_read_attrs(struct rpmi_sbi_mpxy *mpxy, u32 channel_id,
 				    u32 base_attrid, u32 attr_count,
 				    u32 *attrs_buf)
@@ -101,6 +114,24 @@ static int rpmi_sbi_mpxy_read_attrs(struct rpmi_sbi_mpxy *mpxy, u32 channel_id,
 
 	for (i = 0; i < attr_count; i++)
 		attrs_buf[i] = le32_to_cpu(((__le32 *)mpxy->shmem)[i]);
+
+	return 0;
+}
+
+static __maybe_unused int
+rpmi_sbi_mpxy_write_attrs(struct rpmi_sbi_mpxy *mpxy, u32 channel_id,
+			  u32 base_attrid, u32 attr_count, u32 *attrs_buf)
+{
+	struct sbiret sret;
+	int i;
+
+	for (i = 0; i < attr_count; i++)
+		((__le32 *)mpxy->shmem)[i] = cpu_to_le32(attrs_buf[i]);
+
+	sret = sbi_ecall(SBI_EXT_MPXY, SBI_EXT_MPXY_WRITE_ATTRS, channel_id,
+			 base_attrid, attr_count, 0, 0, 0);
+	if (sret.error)
+		return sbi_to_linux_error(sret.error);
 
 	return 0;
 }
@@ -413,3 +444,377 @@ U_BOOT_DRIVER(rpmi_sbi_mpxy) = {
 	.ops = &rpmi_sbi_mpxy_ops,
 	.flags = DM_FLAG_PRE_RELOC,
 };
+
+#if CONFIG_IS_ENABLED(CMD_MPXY) && !CONFIG_IS_ENABLED(XPL_BUILD)
+
+#include <command.h>
+#include <hexdump.h>
+
+static const char *mpxy_proto_to_str(u32 proto_id)
+{
+	switch (proto_id) {
+	case SBI_MPXY_MSGPROTO_RPMI_ID:
+		return "RPMI";
+	default:
+		return "Unknown";
+	}
+}
+
+static struct sbi_mpxy_chan_desc *mpxy_find_chandesc(struct rpmi_sbi_mpxy *mpxy,
+						     u32 chan_id)
+{
+	for (int i = 0; i < mpxy->channel_count; i++) {
+		if (mpxy->channel_descs[i].id == chan_id)
+			return &mpxy->channel_descs[i];
+	}
+
+	return NULL;
+}
+
+/**
+ * mpxy list
+ *
+ * List the mpxy channels
+ */
+static int do_mpxy_list(struct cmd_tbl *cmdtp, int flag, int argc,
+			char *const argv[])
+{
+	struct rpmi_sbi_mpxy *mpxy = mpxy_get_priv();
+	struct sbi_mpxy_chan_desc *chan;
+	u32 proto;
+	int i;
+
+	if (!mpxy)
+		return CMD_RET_FAILURE;
+
+	for (i = 0; i < mpxy->channel_count; i++) {
+		chan = &mpxy->channel_descs[i];
+		proto = chan->attrs[SBI_MPXY_ATTR_MSG_PROT_ID];
+		printf("Channel 0x%x: proto_id=0x%x (%s), ver=0x%x\n", chan->id,
+		       proto, mpxy_proto_to_str(proto),
+		       chan->attrs[SBI_MPXY_ATTR_MSG_PROT_VER]);
+	}
+
+	printf("sbi_mpxy: found %d channels\n", mpxy->channel_count);
+	return CMD_RET_SUCCESS;
+}
+
+static void mpxy_print_capability(u32 val)
+{
+	static const struct {
+		u32 bit;
+		const char *name;
+	} caps[] = {
+		{ SBI_MPXY_CHAN_CAP_MSI, "MSI" },
+		{ SBI_MPXY_CHAN_CAP_SSE, "SSE_EVENT" },
+		{ SBI_MPXY_CHAN_CAP_EVENTS_STATE, "EVENTS_STATE" },
+		{ SBI_MPXY_CHAN_CAP_SEND_WITH_RESP, "SEND_WITH_RESP" },
+		{ SBI_MPXY_CHAN_CAP_SEND_WITHOUT_RESP, "SEND_WITHOUT_RESP" },
+		{ SBI_MPXY_CHAN_CAP_GET_NOTIFICATIONS, "GET_NOTIFICATIONS" },
+	};
+
+	bool any = false;
+	int i;
+
+	printf(" (");
+
+	if (!val) {
+		printf("none)\n");
+		return;
+	}
+
+	for (i = 0; i < ARRAY_SIZE(caps); i++) {
+		if (val & caps[i].bit) {
+			if (any)
+				printf("|");
+			printf("%s", caps[i].name);
+			any = true;
+		}
+	}
+	printf(")\n");
+}
+
+/* Decode well-known field values for selected standard attributes */
+static void mpxy_print_std_attr(u32 attr_id, u32 val)
+{
+	/* Standard MPXY attribute names, indexed by attr_id */
+	static const char *const mpxy_std_attr_names[] = {
+		[SBI_MPXY_ATTR_MSG_PROT_ID] = "MSG_PROT_ID",
+		[SBI_MPXY_ATTR_MSG_PROT_VER] = "MSG_PROT_VER",
+		[SBI_MPXY_ATTR_MSG_MAX_LEN] = "MSG_MAX_LEN",
+		[SBI_MPXY_ATTR_MSG_SEND_TIMEOUT] = "MSG_SEND_TIMEOUT",
+		[SBI_MPXY_ATTR_MSG_COMPLETION_TIMEOUT] =
+			"MSG_COMPLETION_TIMEOUT",
+		[SBI_MPXY_ATTR_CHANNEL_CAPABILITY] = "CHANNEL_CAPABILITY",
+		[SBI_MPXY_ATTR_SSE_EVENT_ID] = "SSE_EVENT_ID",
+		[SBI_MPXY_ATTR_MSI_CONTROL] = "MSI_CONTROL",
+		[SBI_MPXY_ATTR_MSI_ADDR_LO] = "MSI_ADDR_LO",
+		[SBI_MPXY_ATTR_MSI_ADDR_HI] = "MSI_ADDR_HI",
+		[SBI_MPXY_ATTR_MSI_DATA] = "MSI_DATA",
+		[SBI_MPXY_ATTR_EVENTS_STATE_CONTROL] = "EVENTS_STATE_CONTROL",
+	};
+
+	printf("  [0x%02x] %-28s: 0x%08x", attr_id,
+	       mpxy_std_attr_names[attr_id], val);
+
+	switch (attr_id) {
+	case SBI_MPXY_ATTR_MSG_PROT_ID:
+		printf(" (%s)\n", mpxy_proto_to_str(val));
+		break;
+	case SBI_MPXY_ATTR_MSG_PROT_VER:
+		printf(" (v%u.%u)\n", (val >> 16) & 0xffff, val & 0xffff);
+		break;
+	case SBI_MPXY_ATTR_MSG_MAX_LEN:
+		printf(" (%u bytes)\n", val);
+		break;
+	case SBI_MPXY_ATTR_MSG_SEND_TIMEOUT:
+	case SBI_MPXY_ATTR_MSG_COMPLETION_TIMEOUT:
+		printf(" (%u ms)\n", val);
+		break;
+	case SBI_MPXY_ATTR_CHANNEL_CAPABILITY:
+		mpxy_print_capability(val);
+		break;
+	default:
+		printf("\n");
+		break;
+	}
+}
+
+static const char *mpxy_rpmi_proto_attr_name(u32 attr_id)
+{
+	switch (attr_id) {
+	case SBI_MPXY_RPMI_ATTR_SERVICEGROUP_ID:
+		return "SERVICEGROUP_ID";
+	case SBI_MPXY_RPMI_ATTR_SERVICEGROUP_VERSION:
+		return "SERVICEGROUP_VERSION";
+	case SBI_MPXY_RPMI_ATTR_IMPL_ID:
+		return "IMPLEMENTATION_ID";
+	case SBI_MPXY_RPMI_ATTR_IMPL_VERSION:
+		return "IMPLEMENTATION_VER";
+	default:
+		return "UNKNOWN";
+	};
+}
+
+static void mpxy_print_proto_attr(u32 attr_id, u32 val, bool is_rpmi)
+{
+	u32 rpmi_attr_id = attr_id - SBI_MPXY_ATTR_MSGPROTO_ATTR_START;
+	const char *name = is_rpmi ? mpxy_rpmi_proto_attr_name(rpmi_attr_id) :
+				     "UNKNOWN";
+
+	printf("  [0x%08x] %-24s: 0x%08x", attr_id, name, val);
+
+	if (is_rpmi &&
+	    (rpmi_attr_id == SBI_MPXY_RPMI_ATTR_SERVICEGROUP_VERSION ||
+	     rpmi_attr_id == SBI_MPXY_RPMI_ATTR_IMPL_VERSION)) {
+		printf(" (v%u.%u)\n", (val >> 16) & 0xffff, val & 0xffff);
+	} else {
+		printf("\n");
+	}
+}
+
+/**
+ * mpxy readattr <channel_id> <attr_id>
+ *
+ * Read the attribute on a channel
+ */
+static int do_mpxy_readattr(struct cmd_tbl *cmdtp, int flag, int argc,
+			    char *const argv[])
+{
+	struct rpmi_sbi_mpxy *mpxy = mpxy_get_priv();
+	u32 chan_id, attr_id, attr_val;
+	int ret;
+
+	if (argc < 3)
+		return CMD_RET_USAGE;
+
+	if (!mpxy)
+		return CMD_RET_FAILURE;
+
+	chan_id = simple_strtoul(argv[1], NULL, 0);
+	attr_id = simple_strtoul(argv[2], NULL, 0);
+
+	ret = rpmi_sbi_mpxy_read_attrs(mpxy, chan_id, attr_id, 1, &attr_val);
+	if (ret) {
+		printf("Read attr 0x%x on channel 0x%x failed (%d)\n", attr_id,
+		       chan_id, ret);
+		return CMD_RET_FAILURE;
+	}
+
+	printf("Channel 0x%x: attr[0x%x] = 0x%x\n", chan_id, attr_id, attr_val);
+	return CMD_RET_SUCCESS;
+}
+
+/**
+ * mpxy readattrall <channel_id>
+ */
+static int do_mpxy_readattr_all(struct cmd_tbl *cmdtp, int flag, int argc,
+				char *const argv[])
+{
+	struct rpmi_sbi_mpxy *mpxy = mpxy_get_priv();
+	u32 chan_id, attr_val[SBI_MPXY_ATTR_STD_ATTR_MAX_IDX];
+	bool is_rpmi;
+	int i, ret;
+
+	if (argc < 2)
+		return CMD_RET_USAGE;
+
+	if (!mpxy)
+		return CMD_RET_FAILURE;
+
+	chan_id = simple_strtoul(argv[1], NULL, 0);
+
+	ret = rpmi_sbi_mpxy_read_attrs(mpxy, chan_id, SBI_MPXY_ATTR_MSG_PROT_ID,
+				       SBI_MPXY_ATTR_STD_ATTR_MAX_IDX,
+				       attr_val);
+	if (ret) {
+		printf("Read attr on channel 0x%x failed (%d)\n", chan_id, ret);
+		return CMD_RET_FAILURE;
+	}
+
+	is_rpmi = attr_val[SBI_MPXY_ATTR_MSG_PROT_ID] ==
+		  SBI_MPXY_MSGPROTO_RPMI_ID;
+
+	/* Standard attributes */
+	printf("Channel 0x%x standard attributes:\n", chan_id);
+	for (i = 0; i < SBI_MPXY_ATTR_STD_ATTR_MAX_IDX; i++)
+		mpxy_print_std_attr(i, attr_val[i]);
+
+	/* Protocol-specific attributes */
+	printf("Channel 0x%x protocol attributes:\n", chan_id);
+
+	for (i = SBI_MPXY_ATTR_MSGPROTO_ATTR_START;
+	     i < SBI_MPXY_ATTR_MSGPROTO_ATTR_END; i++) {
+		ret = rpmi_sbi_mpxy_read_attrs(mpxy, chan_id, i, 1,
+					       &attr_val[0]);
+		if (ret)
+			break;
+
+		mpxy_print_proto_attr(i, attr_val[0], is_rpmi);
+	}
+
+	return CMD_RET_SUCCESS;
+}
+
+/**
+ * mpxy writeattr <channel_id> <attr_id> <value>
+ */
+static int do_mpxy_writeattr(struct cmd_tbl *cmdtp, int flag, int argc,
+			     char *const argv[])
+{
+	struct rpmi_sbi_mpxy *mpxy = mpxy_get_priv();
+	u32 chan_id, attr_id, attr_val;
+	int ret;
+
+	if (argc < 4)
+		return CMD_RET_USAGE;
+
+	if (!mpxy)
+		return CMD_RET_FAILURE;
+
+	chan_id = simple_strtoul(argv[1], NULL, 0);
+	attr_id = simple_strtoul(argv[2], NULL, 0);
+	attr_val = simple_strtoul(argv[3], NULL, 0);
+
+	ret = rpmi_sbi_mpxy_write_attrs(mpxy, chan_id, attr_id, 1, &attr_val);
+	if (ret) {
+		printf("Write attr 0x%x on channel 0x%x failed (%d)\n", attr_id,
+		       chan_id, ret);
+		return CMD_RET_FAILURE;
+	}
+
+	printf("Channel 0x%x: attr[0x%x] written 0x%x\n", chan_id, attr_id,
+	       attr_val);
+	return CMD_RET_SUCCESS;
+}
+
+/**
+ * mpxy send <channel_id> <msg_id> [payload_word ...]
+ *
+ * For RPMI, msg_id is the service_id. Payload words follow.
+ */
+static int do_mpxy_send(struct cmd_tbl *cmdtp, int flag, int argc,
+			char *const argv[])
+{
+	struct rpmi_sbi_mpxy *mpxy = mpxy_get_priv();
+	struct sbi_mpxy_chan_desc *desc;
+	u32 tx[64];
+	u32 rx[64];
+	unsigned long tx_words, rx_bytes;
+	u32 chan_id, service_id;
+	int i, ret;
+
+	if (argc < 3)
+		return CMD_RET_USAGE;
+
+	if (!mpxy)
+		return CMD_RET_FAILURE;
+
+	chan_id = simple_strtoul(argv[1], NULL, 0);
+	service_id = simple_strtoul(argv[2], NULL, 0);
+	tx_words = argc - 3;
+
+	if (tx_words > ARRAY_SIZE(tx)) {
+		printf("Too many words (max %zu)\n", ARRAY_SIZE(tx));
+		return CMD_RET_FAILURE;
+	}
+
+	desc = mpxy_find_chandesc(mpxy, chan_id);
+	if (!desc) {
+		printf("Cannot find channel 0x%x\n", chan_id);
+		return CMD_RET_FAILURE;
+	}
+
+	for (i = 0; i < tx_words; i++)
+		tx[i] = simple_strtoul(argv[3 + i], NULL, 0);
+
+	ret = rpmi_sbi_mpxy_send_message(mpxy, desc,
+					 SBI_EXT_MPXY_SEND_MSG_WITH_RESP,
+					 service_id, tx, tx_words * 4, rx,
+					 sizeof(rx), &rx_bytes);
+	if (ret) {
+		printf("Send on channel 0x%x failed (%d)\n", chan_id, ret);
+		return CMD_RET_FAILURE;
+	}
+
+	printf("Response (%ld word(s)):\n", rx_bytes / 4);
+	print_hex_dump(" ", DUMP_PREFIX_OFFSET, 4, 4, rx, rx_bytes, true);
+
+	return CMD_RET_SUCCESS;
+}
+
+/**
+ * Subcommand table and top-level dispatch
+ */
+static struct cmd_tbl cmd_mpxy_sub[] = {
+	U_BOOT_CMD_MKENT(list, 1, 0, do_mpxy_list, "", ""),
+	U_BOOT_CMD_MKENT(readattr, 3, 0, do_mpxy_readattr, "", ""),
+	U_BOOT_CMD_MKENT(readattrall, 2, 0, do_mpxy_readattr_all, "", ""),
+	U_BOOT_CMD_MKENT(writeattr, 4, 0, do_mpxy_writeattr, "", ""),
+	U_BOOT_CMD_MKENT(send, CONFIG_SYS_MAXARGS, 0, do_mpxy_send, "", ""),
+};
+
+static int do_mpxy(struct cmd_tbl *cmdtp, int flag, int argc,
+		   char *const argv[])
+{
+	struct cmd_tbl *c;
+
+	if (argc < 2)
+		return CMD_RET_USAGE;
+
+	c = find_cmd_tbl(argv[1], cmd_mpxy_sub, ARRAY_SIZE(cmd_mpxy_sub));
+	if (!c)
+		return CMD_RET_USAGE;
+
+	return c->cmd(cmdtp, flag, argc - 1, argv + 1);
+}
+
+U_BOOT_CMD(
+	mpxy, CONFIG_SYS_MAXARGS, 0, do_mpxy, "SBI MPXY channel debug commands",
+	"list                              - list discovered channels\n"
+	"mpxy readattr    <chan> <attr>         - read one attribute\n"
+	"mpxy readattrall <chan>                - read all attributes\n"
+	"mpxy writeattr   <chan> <attr> <val>   - write an attribute\n"
+	"mpxy send        <chan> <msg_id> [payload_word ...]  - send message\n");
+
+#endif // CONFIG_CMD_MPXY
