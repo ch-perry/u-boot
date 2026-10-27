@@ -43,6 +43,20 @@ static int dm_test_rpmi_clock(struct unit_test_state *uts)
 	ut_assertok(clk_get_by_index(clk_dev, 3, &clk3));
 	ut_asserteq_64(50000000, clk_get_rate(&clk3));
 
+	// round_rate does not round for discrete clock as we don't know how the
+	// platform will round.
+	ut_asserteq(20000100, clk_round_rate(&clk0, 20000100));
+
+	// round_rate rounds up for linear clocks
+	ut_asserteq(50000000, clk_round_rate(&clk3, 49900000));
+	ut_asserteq(50000000, clk_round_rate(&clk3, 50000000));
+	ut_asserteq(51000000, clk_round_rate(&clk3, 50000001));
+	ut_asserteq(51000000, clk_round_rate(&clk3, 50999999));
+	ut_asserteq(51000000, clk_round_rate(&clk3, 51000000));
+	ut_asserteq(52000000, clk_round_rate(&clk3, 51000001));
+	ut_asserteq(100000000, clk_round_rate(&clk3, 999999999));
+	ut_asserteq(100000000, clk_round_rate(&clk3, 100000001));
+
 	return 0;
 }
 DM_TEST(dm_test_rpmi_clock, UTF_SCAN_FDT);

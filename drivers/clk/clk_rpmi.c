@@ -10,6 +10,7 @@
 #include <dm.h>
 #include <dm/device_compat.h>
 #include <dm/device-internal.h>
+#include <div64.h>
 #include <linux/clk-provider.h>
 #include <rpmi.h>
 
@@ -50,6 +51,19 @@ struct rpmi_get_attrs_rx {
 	char name[RPMI_CLK_NAME_LEN];
 };
 
+struct rpmi_get_supp_rates_tx {
+	__le32 clkid;
+	__le32 clk_rate_idx;
+};
+
+struct rpmi_get_supp_rates_linear_rx {
+	__le32 status;
+	__le32 flags;
+	__le32 remaining;
+	__le32 returned;
+	__le32 rates[3 * 2];
+};
+
 struct rpmi_clk_def {
 	u32 num_rates;
 	enum rpmi_clock_type type;
@@ -83,6 +97,11 @@ static int _rpmi_clk_enable_disable(struct rpmi_clk_priv *priv, u32 clkid,
 	return rpmi_to_linux_error(status);
 }
 
+static inline u64 rpmi_clkrate_u64(u32 hi, u32 lo)
+{
+	return ((u64)(le32_to_cpu(hi)) << 32) | le32_to_cpu(lo);
+}
+
 static ulong _rpmi_clk_get_rate(struct rpmi_clk_priv *priv, u32 clkid)
 {
 	__le32 tx = cpu_to_le32(clkid);
@@ -98,7 +117,7 @@ static ulong _rpmi_clk_get_rate(struct rpmi_clk_priv *priv, u32 clkid)
 	if (status)
 		return rpmi_to_linux_error(status);
 
-	return (((u64)(le32_to_cpu(rx.hi)) << 32) | (u32)(le32_to_cpu(rx.lo)));
+	return rpmi_clkrate_u64(rx.hi, rx.lo);
 }
 
 static __maybe_unused int _rpmi_clk_get_config(struct rpmi_clk_priv *priv,
@@ -188,6 +207,61 @@ static ulong rpmi_clk_set_rate(struct clk *clk, ulong rate)
 		return ret;
 
 	return _rpmi_clk_get_rate(dev_get_plat(clk->dev), clk->id & CLK_ID_MSK);
+}
+
+static ulong rpmi_clk_round_rate(struct clk *clk, ulong rate)
+{
+	struct rpmi_clk_priv *priv = dev_get_plat(clk->dev);
+	u32 clkid = clk->id & CLK_ID_MSK;
+	struct rpmi_get_supp_rates_tx tx = {
+		.clkid = cpu_to_le32(clkid),
+		.clk_rate_idx = 0,
+	};
+	struct rpmi_get_supp_rates_linear_rx rx;
+	struct rpmi_clk_def *def;
+	u64 max, min, step, rounded;
+	u32 status;
+	int ret;
+
+	if (clkid >= priv->num_clocks)
+		return -EINVAL;
+
+	def = &priv->defs[clkid];
+
+	if (def->type != RPMI_CLK_TYPE_LINEAR) {
+		/* Keep the requested rate if the clock format is of discrete
+		 * type. Let the platform which is actually controlling the clock
+		 * handle that.
+		 */
+		return rate;
+	}
+
+	ret = rpmi_send_with_resp(&priv->chan, RPMI_CLK_SRV_GET_SUPPORTED_RATES,
+				  &tx, sizeof(tx), &rx, sizeof(rx), NULL);
+	if (ret)
+		return ret;
+
+	status = le32_to_cpu(rx.status);
+	if (status)
+		return rpmi_to_linux_error(status);
+
+	if (rx.returned < 3)
+		return -EIO;
+
+	min = rpmi_clkrate_u64(rx.rates[1], rx.rates[0]);
+	max = rpmi_clkrate_u64(rx.rates[3], rx.rates[2]);
+	step = rpmi_clkrate_u64(rx.rates[5], rx.rates[4]);
+	if (step == 0) // prevent division by 0.
+		return -EIO;
+
+	if (rate < min)
+		return min;
+	else if (rate > max)
+		return max;
+	else {
+		rounded = min + DIV_ROUND_UP_ULL(rate - min, step) * step;
+		return (rounded > max) ? max : rounded;
+	}
 }
 
 static __maybe_unused void rpmi_clk_dump(struct udevice *dev)
@@ -319,6 +393,7 @@ static struct clk_ops rpmi_clk_ops = {
 	.of_xlate = rpmi_clk_xlate,
 	.set_rate = rpmi_clk_set_rate,
 	.get_rate = rpmi_clk_get_rate,
+	.round_rate = rpmi_clk_round_rate,
 	.enable = rpmi_clk_enable,
 	.disable = rpmi_clk_disable,
 #if IS_ENABLED(CONFIG_CMD_CLK)
