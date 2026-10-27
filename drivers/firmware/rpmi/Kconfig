@@ -18,6 +18,13 @@ config RPMI_SBI_MPXY
 	  specification for the MPXY extension is available at:
 	  https://github.com/riscv-non-isa/riscv-sbi-doc (chapter 20)
 
+config CMD_MPXY
+	bool "mpxy command"
+	depends on RPMI_SBI_MPXY
+	help
+	  Enable the 'mpxy' U-Boot command for listing MPXY channels,
+	  reading/writing arbitrary channel attributes and sending raw messages.
+
 config RPMI_SHMEM
 	bool "RPMI over shared memory transport"
 	depends on RPMI_FIRMWARE
