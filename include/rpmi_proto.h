@@ -60,4 +60,27 @@ enum rpmi_servicegroup_id {
 	RPMI_SRVGRP_VENDOR_END		= 0xFFFF,
 };
 
+/** RPMI Base ServiceGroup Service IDs */
+enum rpmi_base_service_id {
+	RPMI_BASE_SRV_ENABLE_NOTIFICATION = 0x01,
+	RPMI_BASE_SRV_GET_IMPLEMENTATION_VERSION = 0x02,
+	RPMI_BASE_SRV_GET_IMPLEMENTATION_IDN = 0x03,
+	RPMI_BASE_SRV_GET_SPEC_VERSION = 0x04,
+	RPMI_BASE_SRV_GET_PLATFORM_INFO = 0x05,
+	RPMI_BASE_SRV_PROBE_SERVICE_GROUP = 0x06,
+	RPMI_BASE_SRV_GET_ATTRIBUTES = 0x07,
+};
+
+/** RPMI Messages Types */
+enum rpmi_message_type {
+	/* Normal request backed with ack */
+	RPMI_MSG_NORMAL_REQUEST = 0x0,
+	/* Request without any ack */
+	RPMI_MSG_POSTED_REQUEST = 0x1,
+	/* Acknowledgment for normal request message */
+	RPMI_MSG_ACKNOWLDGEMENT = 0x2,
+	/* Notification message */
+	RPMI_MSG_NOTIFICATION = 0x3,
+};
+
 #endif
