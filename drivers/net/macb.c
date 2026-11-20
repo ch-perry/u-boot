@@ -663,11 +663,6 @@ static int macb_phy_init(struct udevice *dev, const char *name)
 	arch_get_mdio_control(name);
 	/* If port is not fixed -> setup PHY */
 	if (!macb_port_is_fixed_link(macb)) {
-		/* Auto-detect phy_addr */
-		ret = macb_phy_find(macb, name);
-		if (ret)
-			return ret;
-
 		if (macb->phy_addr == PHY_MAX_ADDR+2) {
 			/* Internal PCS fake PHY */
 			int id;
@@ -676,8 +671,17 @@ static int macb_phy_init(struct udevice *dev, const char *name)
 			macb->phydev->node = dev_ofnode(dev);
 		} else {
 			/* Real PHY */
-			macb->phydev = phy_connect(macb->bus, macb->phy_addr, dev,
-					     macb->phy_interface);
+			if (IS_ENABLED(CONFIG_DM_MDIO))
+				macb->phydev = dm_eth_phy_connect(dev);
+			if (!macb->phydev) {
+				/* Auto-detect phy_addr */
+				ret = macb_phy_find(macb, name);
+				if (ret)
+					return ret;
+
+				macb->phydev = phy_connect(macb->bus, macb->phy_addr,
+							   dev, macb->phy_interface);
+			}
 		}
 
 		if (!macb->phydev) {
