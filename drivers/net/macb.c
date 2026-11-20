@@ -135,9 +135,7 @@ struct macb_device {
 	unsigned int    	speed;
 	unsigned short		phy_addr;
 	struct mii_dev		*bus;
-#ifdef CONFIG_PHYLIB
 	struct phy_device	*phydev;
-#endif
 
 #ifdef CONFIG_CLK
 	unsigned long		pclk_rate;
@@ -269,8 +267,6 @@ void __weak arch_get_mdio_control(const char *name)
 	return;
 }
 
-#if defined(CONFIG_CMD_MII) || defined(CONFIG_PHYLIB)
-
 int macb_miiphy_read(struct mii_dev *bus, int phy_adr, int devad, int reg)
 {
 	u16 value = 0;
@@ -294,7 +290,6 @@ int macb_miiphy_write(struct mii_dev *bus, int phy_adr, int devad, int reg,
 
 	return 0;
 }
-#endif
 
 #define RX	1
 #define TX	0
@@ -712,7 +707,6 @@ static int macb_phy_init(struct udevice *dev, const char *name)
 			return -ENODEV;
 		}
 
-#ifdef CONFIG_PHYLIB
 		if (macb->phy_addr == PHY_MAX_ADDR+2) {
 			/* Internal PCS fake PHY */
 			int id;
@@ -731,7 +725,6 @@ static int macb_phy_init(struct udevice *dev, const char *name)
 		}
 
 		phy_config(macb->phydev);
-#endif
 
 		status = macb_mdio_read(macb, macb->phy_addr, MII_BMSR);
 		if (!(status & BMSR_LSTATUS)) {
@@ -1343,7 +1336,6 @@ static int macb_eth_probe(struct udevice *dev)
 
 	_macb_eth_initialize(macb);
 
-#if defined(CONFIG_CMD_MII) || defined(CONFIG_PHYLIB)
 	macb->bus = mdio_alloc();
 	if (!macb->bus)
 		return -ENOMEM;
@@ -1355,7 +1347,6 @@ static int macb_eth_probe(struct udevice *dev)
 	if (ret < 0)
 		return ret;
 	macb->bus = miiphy_get_dev_by_name(dev->name);
-#endif
 
 	return 0;
 }
@@ -1364,9 +1355,7 @@ static int macb_eth_remove(struct udevice *dev)
 {
 	struct macb_device *macb = dev_get_priv(dev);
 
-#ifdef CONFIG_PHYLIB
 	free(macb->phydev);
-#endif
 	mdio_unregister(macb->bus);
 	mdio_free(macb->bus);
 
