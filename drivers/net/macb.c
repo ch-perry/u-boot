@@ -657,8 +657,8 @@ static int macb_phy_init(struct udevice *dev, const char *name)
 {
 	struct macb_device *macb = dev_get_priv(dev);
 	u32 ncfgr;
-	u16 phy_id, adv, lpa;
-	int media, speed, duplex;
+	u16 phy_id;
+	int speed, duplex;
 	int ret;
 
 	arch_get_mdio_control(name);
@@ -713,53 +713,26 @@ static int macb_phy_init(struct udevice *dev, const char *name)
 		 */
 		mdelay(10);
 
-		adv = macb_mdio_read(macb, macb->phy_addr, MII_ADVERTISE);
-		lpa = macb_mdio_read(macb, macb->phy_addr, MII_LPA);
-
-		/* First check for GMAC and that it is GiB capable */
-		if (gem_is_gigabit_capable(macb)) {
-			if (lpa & ADVERTISE_CSMA)
-				lpa = macb_mdio_read(macb, macb->phy_addr, MII_STAT1000);
-
-			if (lpa & (LPA_1000FULL | LPA_1000HALF | LPA_1000XFULL |
-						LPA_1000XHALF)) {
-				duplex = ((lpa & (LPA_1000FULL | LPA_1000XFULL)) ?
-						1 : 0);
-
-				printf("%s: link up, 1000Mbps %s-duplex (lpa: 0x%04x)\n",
-					name,
-					duplex ? "full" : "half",
-					lpa);
-
-				ncfgr = macb_readl(macb, NCFGR);
-				ncfgr &= ~(MACB_BIT(SPD) | MACB_BIT(FD));
-				ncfgr |= GEM_BIT(GBE);
-
-				if (duplex)
-					ncfgr |= MACB_BIT(FD);
-
-				macb_writel(macb, NCFGR, ncfgr);
-
-				ret = macb_linkspd_cb(dev, _1000BASET);
-				if (ret)
-					return ret;
-
-				return 0;
-			}
+		switch (macb->phydev->speed) {
+		case SPEED_1000:
+			speed = 2;
+			break;
+		case SPEED_100:
+			speed = 1;
+			break;
+		case SPEED_10:
+			speed = 0;
+			break;
+		default:
+			printf("%s: speed %d not supported\n", name, speed);
+			return -EINVAL;
 		}
+		duplex = macb->phydev->duplex;
 
-		/* fall back for EMAC checking */
-		adv = macb_mdio_read(macb, macb->phy_addr, MII_ADVERTISE);
-		lpa = macb_mdio_read(macb, macb->phy_addr, MII_LPA);
-		media = mii_nway_result(lpa & adv);
-		speed = (media & (ADVERTISE_100FULL | ADVERTISE_100HALF)
-			? 1 : 0);
-		duplex = (media & ADVERTISE_FULL) ? 1 : 0;
-		printf("%s: link up, %sMbps %s-duplex (lpa: 0x%04x)\n",
-			name,
-			speed ? "100" : "10",
-			duplex ? "full" : "half",
-			lpa);
+		printf("%s: link up, %sMbps %s-duplex\n", name,
+			(speed == 2) ? "1000" : (speed == 1) ? "100" : "10",
+			duplex ? "full" : "half");
+
 	} else {
 		/* if macb port is a fixed link */
 		const char *human_readable_speed;
