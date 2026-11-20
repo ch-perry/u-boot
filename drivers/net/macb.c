@@ -61,7 +61,6 @@ DECLARE_GLOBAL_DATA_PTR;
 #define MACB_TX_RING_SIZE		16
 
 #define MACB_TX_TIMEOUT		1000
-#define MACB_AUTONEG_TIMEOUT	5000000
 
 #ifdef CONFIG_MACB_ZYNQ
 /* INCR4 AHB bursts */
@@ -539,35 +538,6 @@ static int _macb_recv(struct macb_device *macb, uchar **packetp)
 	}
 }
 
-static void macb_phy_reset(struct macb_device *macb, const char *name)
-{
-	int i;
-	u16 status, adv;
-
-	if (macb->phy_interface == PHY_INTERFACE_MODE_1000BASEX ||
-	    macb->phy_sub_interface == PHY_INTERFACE_MODE_1000BASEX)
-		adv = ADVERTISE_1000XFULL;
-	else
-		adv = ADVERTISE_CSMA | ADVERTISE_ALL;
-	macb_mdio_write(macb, macb->phy_addr, MII_ADVERTISE, adv);
-	printf("%s: Starting autonegotiation...\n", name);
-	macb_mdio_write(macb, macb->phy_addr, MII_BMCR, (BMCR_ANENABLE
-					 | BMCR_ANRESTART));
-
-	for (i = 0; i < MACB_AUTONEG_TIMEOUT / 100; i++) {
-		status = macb_mdio_read(macb, macb->phy_addr, MII_BMSR);
-		if (status & BMSR_ANEGCOMPLETE)
-			break;
-		udelay(100);
-	}
-
-	if (status & BMSR_ANEGCOMPLETE)
-		printf("%s: Autonegotiation complete\n", name);
-	else
-		printf("%s: Autonegotiation timed out (status=0x%04x)\n",
-		       name, status);
-}
-
 static int macb_phy_find(struct macb_device *macb, const char *name)
 {
 	int i;
@@ -687,10 +657,9 @@ static int macb_phy_init(struct udevice *dev, const char *name)
 {
 	struct macb_device *macb = dev_get_priv(dev);
 	u32 ncfgr;
-	u16 phy_id, status, adv, lpa;
+	u16 phy_id, adv, lpa;
 	int media, speed, duplex;
 	int ret;
-	int i;
 
 	arch_get_mdio_control(name);
 	/* If port is not fixed -> setup PHY */
@@ -730,30 +699,19 @@ static int macb_phy_init(struct udevice *dev, const char *name)
 			return ret;
 		}
 
-		status = macb_mdio_read(macb, macb->phy_addr, MII_BMSR);
-		if (!(status & BMSR_LSTATUS)) {
-			/* Try to re-negotiate if we don't have link already. */
-			macb_phy_reset(macb, name);
+		ret = phy_startup(macb->phydev);
+		if (ret)
+			return ret;
 
-			for (i = 0; i < MACB_AUTONEG_TIMEOUT / 100; i++) {
-				status = macb_mdio_read(macb, macb->phy_addr, MII_BMSR);
-				if (status & BMSR_LSTATUS) {
-					/*
-					 * Delay a bit after the link is established,
-					 * so that the next xfer does not fail
-					 */
-					mdelay(10);
-					break;
-				}
-				udelay(100);
-			}
-		}
-
-		if (!(status & BMSR_LSTATUS)) {
-			printf("%s: link down (status: 0x%04x)\n",
-			       name, status);
+		if (!macb->phydev->link) {
+			printf("%s: link down\n", name);
 			return -ENETDOWN;
 		}
+
+		/* Delay a bit after the link is established, so that the next
+		 * xfer does not fail
+		 */
+		mdelay(10);
 
 		adv = macb_mdio_read(macb, macb->phy_addr, MII_ADVERTISE);
 		lpa = macb_mdio_read(macb, macb->phy_addr, MII_LPA);
